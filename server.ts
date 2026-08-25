@@ -2,7 +2,7 @@ import express from 'express'
 import { createServer as createViteServer } from 'vite'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { getMarketData } from './server/market.ts'
+import { getMarketData } from './server/market.js'
 
 const app = express()
 const port = Number(process.env.PORT ?? 5173)

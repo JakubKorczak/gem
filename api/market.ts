@@ -1,4 +1,4 @@
-import { getMarketData } from '../server/market.ts'
+import { getMarketData } from '../server/market.js'
 
 export default {
   async fetch(request: Request) {

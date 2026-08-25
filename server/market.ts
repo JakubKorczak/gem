@@ -1,5 +1,5 @@
-import { ASSETS } from '../src/shared/assets.ts'
-import type { MarketResponse, PricePoint } from '../src/types.ts'
+import { ASSETS } from '../src/shared/assets.js'
+import type { MarketResponse, PricePoint } from '../src/types.js'
 
 const cache = new Map<string, { expires: number; data: MarketResponse }>()
 
