@@ -14,6 +14,45 @@ type YahooResponse = {
   }
 }
 
+const YAHOO_HOSTS = ['query2.finance.yahoo.com', 'query1.finance.yahoo.com'] as const
+
+function yahooChartUrl(host: (typeof YAHOO_HOSTS)[number], ticker: string) {
+  return `https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=2y&interval=1d&events=div%2Csplits`
+}
+
+async function fetchYahooChart(ticker: (typeof ASSETS)[number]['ticker']): Promise<YahooResponse> {
+  let lastError: unknown
+
+  for (const host of YAHOO_HOSTS) {
+    try {
+      const response = await fetch(yahooChartUrl(host, ticker), {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'Mozilla/5.0 GEM-Kompas/0.1',
+        },
+        signal: AbortSignal.timeout(12_000),
+      })
+      const body = await response.text()
+
+      if (!response.ok) {
+        throw new Error(`Źródło danych zwróciło ${response.status} dla ${ticker}`)
+      }
+
+      try {
+        return JSON.parse(body) as YahooResponse
+      } catch {
+        throw new Error(`Źródło danych zwróciło nieprawidłową odpowiedź dla ${ticker}`)
+      }
+    } catch (error) {
+      lastError = error
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Nie udało się pobrać notowań dla ${ticker}`)
+}
+
 function normalizePoints(timestamps: number[], closes: Array<number | null>): PricePoint[] {
   const raw = timestamps
     .map((timestamp, index) => ({
@@ -41,14 +80,7 @@ function lastPointOnOrBefore(points: PricePoint[], isoDate: string) {
 }
 
 async function fetchAsset(ticker: (typeof ASSETS)[number]['ticker']) {
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=2y&interval=1d&events=div%2Csplits`
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 GEM-Kompas/0.1' },
-    signal: AbortSignal.timeout(12_000),
-  })
-  if (!response.ok) throw new Error(`Źródło danych zwróciło ${response.status} dla ${ticker}`)
-
-  const payload = (await response.json()) as YahooResponse
+  const payload = await fetchYahooChart(ticker)
   const result = payload.chart?.result?.[0]
   const timestamps = result?.timestamp
   const closes = result?.indicators?.adjclose?.[0]?.adjclose

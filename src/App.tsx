@@ -38,9 +38,21 @@ const formatSignalMonth = (isoDate: string) => {
 
 async function getMarketData(): Promise<MarketResponse> {
   const response = await fetch('/api/market')
-  const body = await response.json()
+  const rawBody = await response.text()
+  let body: Partial<MarketResponse> & { error?: string }
+
+  try {
+    body = JSON.parse(rawBody) as Partial<MarketResponse> & { error?: string }
+  } catch {
+    throw new Error(
+      response.ok
+        ? 'Serwer notowań zwrócił nieprawidłowe dane.'
+        : 'Serwer notowań jest chwilowo niedostępny.',
+    )
+  }
+
   if (!response.ok) throw new Error(body.error ?? 'Nie udało się pobrać notowań')
-  return body
+  return body as MarketResponse
 }
 
 function LoadingState() {
