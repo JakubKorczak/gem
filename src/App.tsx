@@ -16,6 +16,7 @@ import {
   WalletCards,
 } from 'lucide-react'
 import { ASSETS } from './shared/assets'
+import type { AssetTicker } from './shared/assets'
 import type { MarketResponse } from './types'
 import { PerformanceChart } from './PerformanceChart'
 import { rebalanceSchedule } from './calendar'
@@ -28,6 +29,7 @@ const formatDate = (date: Date | string) => new Intl.DateTimeFormat('pl-PL', {
 }).format(typeof date === 'string' ? new Date(`${date}T12:00:00`) : date)
 
 const formatPercent = (value: number) => `${value >= 0 ? '+' : ''}${value.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+const formatPercentagePoints = (value: number) => `${value >= 0 ? '+' : ''}${value.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} p.p.`
 
 const formatSignalMonth = (isoDate: string) => {
   const date = new Date(`${isoDate}T12:00:00Z`)
@@ -62,7 +64,7 @@ function LoadingState() {
       <div className="loading-card">
         <span className="loading-orbit"><RefreshCw size={24} /></span>
         <h1>Sprawdzam rynki</h1>
-        <p>Pobieram ostatnie 12 miesięcy notowań czterech ETF-ów z giełdy w Londynie.</p>
+        <p>Pobieram ostatnie 12 miesięcy notowań pięciu ETF-ów z giełdy w Londynie.</p>
       </div>
     </main>
   )
@@ -72,11 +74,17 @@ export default function App() {
   const market = useQuery({ queryKey: ['market'], queryFn: getMarketData })
   const [visible, setVisible] = useState<string[]>(ASSETS.map((asset) => asset.ticker))
   const [methodOpen, setMethodOpen] = useState(false)
-  const [currentHolding, setCurrentHolding] = useState(() => localStorage.getItem(HOLDING_STORAGE_KEY) ?? '')
+  const [currentHolding, setCurrentHolding] = useState<AssetTicker | ''>(() => {
+    const stored = localStorage.getItem(HOLDING_STORAGE_KEY)
+    return ASSETS.some((asset) => asset.ticker === stored) ? stored as AssetTicker : ''
+  })
   const schedule = rebalanceSchedule()
 
   const ranking = useMemo(() => market.data ? [...market.data.assets].sort((a, b) => b.return12m - a.return12m) : [], [market.data])
-  const signal = useMemo(() => market.data ? calculateGemSignal(market.data.assets) : null, [market.data])
+  const signal = useMemo(
+    () => market.data ? calculateGemSignal(market.data.assets, currentHolding) : null,
+    [market.data, currentHolding],
+  )
   const selected = signal?.selected
   const selectedMeta = ASSETS.find((asset) => asset.ticker === selected?.ticker)
 
@@ -99,6 +107,7 @@ export default function App() {
   const signalMonth = formatSignalMonth(market.data.signalDate)
   const equityMeta = ASSETS.find((asset) => asset.ticker === signal.equityWinner.ticker)!
   const defensiveMeta = ASSETS.find((asset) => asset.ticker === signal.defensiveWinner.ticker)!
+  const candidateMeta = ASSETS.find((asset) => asset.ticker === signal.candidate.ticker)!
   const actionLabel = schedule.isDecisionDay
     ? currentHolding === selected.ticker
       ? `Bez zmian — utrzymaj ${selectedMeta.shortTicker}`
@@ -109,7 +118,7 @@ export default function App() {
       ? `Bez zmian — utrzymuj ${selectedMeta.shortTicker}`
       : 'Dziś nie składaj zlecenia'
 
-  const updateHolding = (ticker: string) => {
+  const updateHolding = (ticker: AssetTicker | '') => {
     setCurrentHolding(ticker)
     if (ticker) localStorage.setItem(HOLDING_STORAGE_KEY, ticker)
     else localStorage.removeItem(HOLDING_STORAGE_KEY)
@@ -133,7 +142,7 @@ export default function App() {
 
         <section className="recommendation-card" style={{ '--accent': selectedMeta.color, '--pale': selectedMeta.pale } as React.CSSProperties}>
           <div className="recommendation-topline">
-            <span className="signal-pill"><TrendingUp size={14} /> {signal.riskOn ? 'Tryb risk-on' : 'Tryb ochronny'}</span>
+            <span className="signal-pill"><TrendingUp size={14} /> {signal.switchBuffered ? 'Bufor 3 p.p. · bez zmiany' : signal.riskOn ? 'Tryb risk-on' : 'Tryb ochronny'}</span>
             <span className="signal-date">Zamknięty sygnał miesięczny</span>
           </div>
           <p className="recommendation-kicker">Sygnał obowiązujący na {signalMonth}</p>
@@ -151,7 +160,7 @@ export default function App() {
           </div>
           <label className="holding-control">
             <span><WalletCards size={16} /> Co masz obecnie w portfelu?</span>
-            <select value={currentHolding} onChange={(event) => updateHolding(event.target.value)}>
+            <select value={currentHolding} onChange={(event) => updateHolding(event.target.value as AssetTicker | '')}>
               <option value="">Nie ustawiono</option>
               {ASSETS.map((asset) => <option key={asset.ticker} value={asset.ticker}>{asset.shortTicker} — {asset.name}</option>)}
             </select>
@@ -203,7 +212,7 @@ export default function App() {
             <article>
               <div className="decision-icon"><Scale size={20} /></div><span className="decision-step">Krok 1 · momentum względne</span>
               <h3>{equityMeta.shortTicker} wygrywa rynek akcji</h3>
-              <p>{equityMeta.name} ma przewagę <strong>{formatPercent(signal.equityMargin)}</strong> nad drugim ETF-em akcyjnym.</p>
+              <p>{equityMeta.name} ma przewagę <strong>{formatPercent(signal.equityMargin)}</strong> nad kolejnym ETF-em akcyjnym.</p>
             </article>
             <ArrowRight className="decision-arrow" />
             <article>
@@ -215,7 +224,11 @@ export default function App() {
             <article>
               <div className="decision-icon"><Landmark size={20} /></div><span className="decision-step">Krok 3 · pozycja</span>
               <h3>Portfel: {selectedMeta.shortTicker}</h3>
-              <p>{signal.riskOn ? `W trybie risk-on trzymamy zwycięzcę części akcyjnej.` : `W obronie silniejszy jest ${defensiveMeta.shortTicker} — przewaga ${formatPercent(signal.defensiveMargin)}.`}</p>
+              <p>{signal.switchBuffered
+                ? `${candidateMeta.shortTicker} ma przewagę ${formatPercentagePoints(signal.switchAdvantage ?? 0)}, czyli mniej niż wymagane +${signal.switchBuffer.toLocaleString('pl-PL')} p.p. — bez zmiany pozycji.`
+                : signal.riskOn
+                  ? `W trybie risk-on trzymamy zwycięzcę części akcyjnej.`
+                  : `W obronie silniejszy jest ${defensiveMeta.shortTicker} — przewaga ${formatPercent(signal.defensiveMargin)}.`}</p>
             </article>
           </div>
         </section>
@@ -226,8 +239,9 @@ export default function App() {
             <ChevronDown className={methodOpen ? 'rotated' : ''} />
           </button>
           {methodOpen && <div className="method-content">
-            <p><strong>Reguła adaptowana:</strong> porównujemy EIMI z IWDA i wybieramy silniejszy ETF akcyjny. Jeżeli jego 12-miesięczna stopa zwrotu przewyższa IB01, portfel otrzymuje sygnał risk-on. Jeżeli nie — przechodzi do silniejszego z CBU0 i IB01.</p>
-            <p><strong>Dlaczego nie nazywamy tego dokładnym klasycznym GEM?</strong> Oryginał porównuje akcje USA z akcjami poza USA, a w trybie ochronnym wykorzystuje szeroki indeks obligacji agregatowych. IWDA zawiera dużo USA, EIMI obejmuje tylko rynki wschodzące, a CBU0 to obligacje skarbowe USA 7–10 lat. Mechanika dual momentum jest zachowana, lecz koszyki są inne.</p>
+            <p><strong>Reguła adaptowana:</strong> porównujemy EIMI, IWDA i CNDX, a następnie wybieramy najsilniejszy ETF akcyjny. Jeżeli jego 12-miesięczna stopa zwrotu przewyższa IB01, portfel otrzymuje sygnał risk-on. Jeżeli nie — przechodzi do silniejszego z CBU0 i IB01.</p>
+            <p><strong>Bufor zmiany 3 p.p.:</strong> jeśli w portfelu jest już ustawione aktywo, nowy kandydat musi mieć momentum wyższe o co najmniej 3 punkty procentowe. Mniejsza przewaga nie wywołuje zmiany, co ogranicza niepotrzebne transakcje przy częstym przecinaniu się wykresów.</p>
+            <p><strong>Dlaczego nie nazywamy tego dokładnym klasycznym GEM?</strong> Oryginał porównuje akcje USA z akcjami poza USA, a w trybie ochronnym wykorzystuje szeroki indeks obligacji agregatowych. CNDX koncentruje się na Nasdaq 100, IWDA zawiera dużo USA, EIMI obejmuje tylko rynki wschodzące, a CBU0 to obligacje skarbowe USA 7–10 lat. Mechanika dual momentum jest zachowana, lecz koszyki są inne.</p>
             <p><strong>Sygnał nie zmienia się w środku miesiąca.</strong> Obliczamy go ze skorygowanych cen zamknięcia od końca miesiąca do końca miesiąca 12 miesięcy wcześniej. Kalendarz uwzględnia weekendy i standardowe dni bez sesji LSE.</p>
           </div>}
         </section>

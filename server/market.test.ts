@@ -50,8 +50,8 @@ describe('getMarketData', () => {
     const { getMarketData } = await import('./market')
     const result = await getMarketData()
 
-    expect(result.assets).toHaveLength(4)
-    expect(fetchMock).toHaveBeenCalledTimes(8)
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('query1.finance.yahoo.com'))).toHaveLength(4)
+    expect(result.assets).toHaveLength(5)
+    expect(fetchMock).toHaveBeenCalledTimes(10)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('query1.finance.yahoo.com'))).toHaveLength(5)
   })
 })

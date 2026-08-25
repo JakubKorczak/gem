@@ -20,6 +20,16 @@ export const ASSETS = [
     pale: '#edf3ff',
   },
   {
+    ticker: 'CNDX.L',
+    shortTicker: 'CNDX',
+    name: 'Nasdaq 100',
+    fullName: 'iShares NASDAQ 100 UCITS ETF',
+    description: 'Sto największych niefinansowych spółek notowanych na Nasdaq.',
+    isin: 'IE00B53SZB19',
+    color: '#b34dc9',
+    pale: '#f9edfc',
+  },
+  {
     ticker: 'CBU0.L',
     shortTicker: 'CBU0',
     name: 'Obligacje USA 7–10 lat',
