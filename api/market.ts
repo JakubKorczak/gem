@@ -1,4 +1,4 @@
-import { getMarketData } from '../server/market.js'
+import { getMarketData, MarketDataError } from '../server/market.js'
 
 export default {
   async fetch(request: Request) {
@@ -18,7 +18,8 @@ export default {
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nieznany błąd źródła danych'
-      return Response.json({ error: message }, { status: 502 })
+      const code = error instanceof MarketDataError ? error.code : 'UPSTREAM_UNAVAILABLE'
+      return Response.json({ error: message, code }, { status: 502 })
     }
   },
 }

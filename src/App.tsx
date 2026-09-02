@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArrowRight,
@@ -14,48 +14,20 @@ import {
   Sparkles,
   TrendingUp,
   WalletCards,
+  WifiOff,
 } from 'lucide-react'
 import { ASSETS } from './shared/assets'
 import type { AssetTicker } from './shared/assets'
-import type { MarketResponse } from './types'
-import { PerformanceChart } from './PerformanceChart'
-import { rebalanceSchedule } from './calendar'
+import { lseDateKey, rebalanceSchedule } from './calendar'
+import { APP_GUIDE_SECTIONS } from './app-guide'
+import { formatDate, formatDateTime, formatPercentagePoints, formatPercent, formatSignalMonth } from './format'
+import { getMarketData, marketQueryKey } from './market-client'
 import { calculateGemSignal } from './strategy'
 
 const HOLDING_STORAGE_KEY = 'gem-current-holding-v2'
-
-const formatDate = (date: Date | string) => new Intl.DateTimeFormat('pl-PL', {
-  day: 'numeric', month: 'long', year: 'numeric',
-}).format(typeof date === 'string' ? new Date(`${date}T12:00:00`) : date)
-
-const formatPercent = (value: number) => `${value >= 0 ? '+' : ''}${value.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
-const formatPercentagePoints = (value: number) => `${value >= 0 ? '+' : ''}${value.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} p.p.`
-
-const formatSignalMonth = (isoDate: string) => {
-  const date = new Date(`${isoDate}T12:00:00Z`)
-  date.setUTCDate(1)
-  date.setUTCMonth(date.getUTCMonth() + 1)
-  return new Intl.DateTimeFormat('pl-PL', { month: 'long', year: 'numeric' }).format(date)
-}
-
-async function getMarketData(): Promise<MarketResponse> {
-  const response = await fetch('/api/market')
-  const rawBody = await response.text()
-  let body: Partial<MarketResponse> & { error?: string }
-
-  try {
-    body = JSON.parse(rawBody) as Partial<MarketResponse> & { error?: string }
-  } catch {
-    throw new Error(
-      response.ok
-        ? 'Serwer notowań zwrócił nieprawidłowe dane.'
-        : 'Serwer notowań jest chwilowo niedostępny.',
-    )
-  }
-
-  if (!response.ok) throw new Error(body.error ?? 'Nie udało się pobrać notowań')
-  return body as MarketResponse
-}
+const PerformanceChart = lazy(() => import('./PerformanceChart').then((module) => ({
+  default: module.PerformanceChart,
+})))
 
 function LoadingState() {
   return (
@@ -71,22 +43,61 @@ function LoadingState() {
 }
 
 export default function App() {
-  const market = useQuery({ queryKey: ['market'], queryFn: getMarketData })
+  const [lseDay, setLseDay] = useState(lseDateKey)
+  const market = useQuery({ queryKey: marketQueryKey(lseDay), queryFn: getMarketData })
   const [visible, setVisible] = useState<string[]>(ASSETS.map((asset) => asset.ticker))
   const [methodOpen, setMethodOpen] = useState(false)
+  const [online, setOnline] = useState(navigator.onLine)
   const [currentHolding, setCurrentHolding] = useState<AssetTicker | ''>(() => {
-    const stored = localStorage.getItem(HOLDING_STORAGE_KEY)
-    return ASSETS.some((asset) => asset.ticker === stored) ? stored as AssetTicker : ''
+    try {
+      const stored = localStorage.getItem(HOLDING_STORAGE_KEY)
+      return ASSETS.some((asset) => asset.ticker === stored) ? stored as AssetTicker : ''
+    } catch {
+      return ''
+    }
   })
-  const schedule = rebalanceSchedule()
+  const schedule = useMemo(() => rebalanceSchedule(new Date(`${lseDay}T12:00:00Z`)), [lseDay])
+
+  useEffect(() => {
+    const refreshLseDay = () => setLseDay((current) => {
+      const next = lseDateKey()
+      return next === current ? current : next
+    })
+    const interval = window.setInterval(refreshLseDay, 60_000)
+
+    document.addEventListener('visibilitychange', refreshLseDay)
+    window.addEventListener('focus', refreshLseDay)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', refreshLseDay)
+      window.removeEventListener('focus', refreshLseDay)
+    }
+  }, [])
+
+  useEffect(() => {
+    const markOnline = () => setOnline(true)
+    const markOffline = () => setOnline(false)
+
+    window.addEventListener('online', markOnline)
+    window.addEventListener('offline', markOffline)
+    return () => {
+      window.removeEventListener('online', markOnline)
+      window.removeEventListener('offline', markOffline)
+    }
+  }, [])
 
   const ranking = useMemo(() => market.data ? [...market.data.assets].sort((a, b) => b.return12m - a.return12m) : [], [market.data])
   const signal = useMemo(
-    () => market.data ? calculateGemSignal(market.data.assets, currentHolding) : null,
+    () => market.data ? calculateGemSignal(
+      market.data.assets,
+      market.data.isActionable ? currentHolding : '',
+    ) : null,
     [market.data, currentHolding],
   )
   const selected = signal?.selected
   const selectedMeta = ASSETS.find((asset) => asset.ticker === selected?.ticker)
+  const showingCachedSignal = !online || market.data?.dataMode !== 'live'
+  const staleSignal = market.data?.dataMode === 'stale'
 
   if (market.isPending) return <LoadingState />
 
@@ -108,20 +119,36 @@ export default function App() {
   const equityMeta = ASSETS.find((asset) => asset.ticker === signal.equityWinner.ticker)!
   const defensiveMeta = ASSETS.find((asset) => asset.ticker === signal.defensiveWinner.ticker)!
   const candidateMeta = ASSETS.find((asset) => asset.ticker === signal.candidate.ticker)!
-  const actionLabel = schedule.isDecisionDay
-    ? currentHolding === selected.ticker
-      ? `Bez zmian — utrzymaj ${selectedMeta.shortTicker}`
-      : currentHolding
-        ? `Zamień ${ASSETS.find((asset) => asset.ticker === currentHolding)?.shortTicker} na ${selectedMeta.shortTicker}`
-        : `Zweryfikuj i ustaw 100% ${selectedMeta.shortTicker}`
-    : currentHolding === selected.ticker
-      ? `Bez zmian — utrzymuj ${selectedMeta.shortTicker}`
-      : 'Dziś nie składaj zlecenia'
+  const currentMeta = ASSETS.find((asset) => asset.ticker === currentHolding)
+  const positionAction = currentHolding === selected.ticker
+    ? `bez zmian — utrzymuj ${selectedMeta.shortTicker}`
+    : currentHolding
+      ? `zamień ${currentMeta?.shortTicker} na ${selectedMeta.shortTicker}`
+      : `zweryfikuj i ustaw 100% ${selectedMeta.shortTicker}`
+  const immediateAction = `${positionAction.charAt(0).toLocaleUpperCase('pl-PL')}${positionAction.slice(1)}`
+  const actionLabel = !market.data.isActionable
+    ? 'Połącz się z internetem i pobierz aktualny sygnał'
+    : schedule.isBeforeDecisionDay
+    ? `Poczekaj do ${formatDate(schedule.next)}`
+    : schedule.isDecisionDay || currentHolding === selected.ticker
+      ? immediateAction
+      : `Jeśli decyzja nie była wykonana — ${positionAction}`
+  const actionDetail = !market.data.isActionable
+    ? 'Ten zapis pochodzi z wcześniejszego miesiąca i nie może być podstawą transakcji.'
+    : schedule.isBeforeDecisionDay
+    ? 'Wykonaj zmianę dopiero w planowanym dniu decyzji.'
+    : schedule.isDecisionDay
+      ? 'Najpierw potwierdź ceny u brokera.'
+      : `Sygnał obowiązuje do kolejnej decyzji (${formatDate(schedule.next)}). Przed zleceniem potwierdź ceny u brokera.`
 
   const updateHolding = (ticker: AssetTicker | '') => {
     setCurrentHolding(ticker)
-    if (ticker) localStorage.setItem(HOLDING_STORAGE_KEY, ticker)
-    else localStorage.removeItem(HOLDING_STORAGE_KEY)
+    try {
+      if (ticker) localStorage.setItem(HOLDING_STORAGE_KEY, ticker)
+      else localStorage.removeItem(HOLDING_STORAGE_KEY)
+    } catch {
+      // W trybie prywatnym wybór może działać tylko do końca bieżącej sesji.
+    }
   }
 
   return (
@@ -130,7 +157,17 @@ export default function App() {
         <a className="brand" href="#top" aria-label="GEM Kompas — strona główna">
           <span className="brand-mark">G</span><span>GEM Kompas</span>
         </a>
-        <div className="data-status"><span className="status-dot" /> Sygnał z {formatDate(market.data.signalDate)}</div>
+        <div className={`data-status ${showingCachedSignal ? 'data-status--offline' : ''} ${staleSignal ? 'data-status--stale' : ''}`}>
+          {showingCachedSignal ? <WifiOff size={14} /> : <span className="status-dot" />}
+          <span className="data-status-copy">
+            <span>{staleSignal
+              ? 'Stary zapis — bez decyzji'
+              : showingCachedSignal
+                ? 'Aktualny zapisany sygnał'
+                : `Sygnał z ${formatDate(market.data.signalDate)}`}</span>
+            {showingCachedSignal && <small>Zapis: {formatDateTime(market.data.snapshotSavedAt)}</small>}
+          </span>
+        </div>
       </header>
 
       <main id="top" className="app-shell main-grid">
@@ -140,9 +177,15 @@ export default function App() {
           <p>Sygnał jest liczony raz w miesiącu z zamkniętych danych. Najpierw wybieramy silniejszy rynek akcji, potem sprawdzamy, czy warto w ogóle podejmować ryzyko.</p>
         </section>
 
-        <section className="recommendation-card" style={{ '--accent': selectedMeta.color, '--pale': selectedMeta.pale } as React.CSSProperties}>
+        <section className={`recommendation-card ${staleSignal ? 'recommendation-card--stale' : ''}`} style={{ '--accent': selectedMeta.color, '--pale': selectedMeta.pale } as React.CSSProperties}>
           <div className="recommendation-topline">
-            <span className="signal-pill"><TrendingUp size={14} /> {signal.switchBuffered ? 'Bufor 3 p.p. · bez zmiany' : signal.riskOn ? 'Tryb risk-on' : 'Tryb ochronny'}</span>
+            <span className="signal-pill"><TrendingUp size={14} /> {staleSignal
+              ? 'Stary sygnał · tylko informacyjnie'
+              : signal.forcedRiskOff
+                ? 'Tryb ochronny · bufor pominięty'
+                : signal.switchBuffered
+                  ? 'Bufor 3 p.p. · bez zmiany'
+                  : signal.riskOn ? 'Tryb akcyjny' : 'Tryb ochronny'}</span>
             <span className="signal-date">Zamknięty sygnał miesięczny</span>
           </div>
           <p className="recommendation-kicker">Sygnał obowiązujący na {signalMonth}</p>
@@ -151,12 +194,12 @@ export default function App() {
             <div><h2>{selectedMeta.name}</h2><p>{selectedMeta.fullName}</p></div>
           </div>
           <div className="recommendation-metrics">
-            <div><span>Momentum 12M</span><strong>{formatPercent(selected.return12m)}</strong></div>
-            <div><span>Filtr akcji vs IB01</span><strong>{formatPercent(signal.absoluteMargin)}</strong></div>
+            <div><span>Stopa zwrotu 12M</span><strong>{formatPercent(selected.return12m)}</strong></div>
+            <div><span>Filtr akcji vs IB01</span><strong>{formatPercentagePoints(signal.absoluteMargin)}</strong></div>
           </div>
           <div className="next-action">
             <div className="action-icon"><CalendarDays size={21} /></div>
-            <div><span>Co zrobić teraz</span><strong>{actionLabel}</strong><small>{schedule.isDecisionDay ? 'Najpierw potwierdź ceny u brokera' : `Następna planowana decyzja: ${formatDate(schedule.next)}`}</small></div>
+            <div><span>Co zrobić teraz</span><strong>{actionLabel}</strong><small>{actionDetail}</small></div>
           </div>
           <label className="holding-control">
             <span><WalletCards size={16} /> Co masz obecnie w portfelu?</span>
@@ -197,10 +240,14 @@ export default function App() {
           <div className="chart-controls">
             {ASSETS.map((asset) => {
               const active = visible.includes(asset.ticker)
-              return <button key={asset.ticker} className={active ? 'active' : ''} onClick={() => setVisible((current) => active ? current.filter((item) => item !== asset.ticker) : [...current, asset.ticker])}><span style={{ background: asset.color }} />{asset.shortTicker}</button>
+              return <button key={asset.ticker} className={active ? 'active' : ''} aria-pressed={active} onClick={() => setVisible((current) => active ? current.filter((item) => item !== asset.ticker) : [...current, asset.ticker])}><span style={{ background: asset.color }} />{asset.shortTicker}</button>
             })}
           </div>
-          <div className="chart-wrap"><PerformanceChart assets={market.data.assets} visible={visible} /></div>
+          <div className="chart-wrap">
+            <Suspense fallback={<div className="chart-loading">Ładowanie wykresu…</div>}>
+              <PerformanceChart assets={market.data.assets} visible={visible} />
+            </Suspense>
+          </div>
         </section>
 
         <section className="section full-span" id="ranking">
@@ -210,15 +257,15 @@ export default function App() {
           </div>
           <div className="decision-grid">
             <article>
-              <div className="decision-icon"><Scale size={20} /></div><span className="decision-step">Krok 1 · momentum względne</span>
+              <div className="decision-icon"><Scale size={20} /></div><span className="decision-step">Krok 1 · porównanie akcji</span>
               <h3>{equityMeta.shortTicker} wygrywa rynek akcji</h3>
-              <p>{equityMeta.name} ma przewagę <strong>{formatPercent(signal.equityMargin)}</strong> nad kolejnym ETF-em akcyjnym.</p>
+              <p>{equityMeta.name} ma przewagę <strong>{formatPercentagePoints(signal.equityMargin)}</strong> nad kolejnym ETF-em akcyjnym.</p>
             </article>
             <ArrowRight className="decision-arrow" />
             <article>
-              <div className="decision-icon"><ShieldCheck size={20} /></div><span className="decision-step">Krok 2 · momentum absolutne</span>
+              <div className="decision-icon"><ShieldCheck size={20} /></div><span className="decision-step">Krok 2 · akcje czy ochrona</span>
               <h3>{signal.riskOn ? 'Ryzyko jest dozwolone' : 'Włącz ochronę kapitału'}</h3>
-              <p>{equityMeta.shortTicker} {signal.riskOn ? 'pokonuje' : 'nie pokonuje'} IB01 o <strong>{formatPercent(Math.abs(signal.absoluteMargin))}</strong>.</p>
+              <p>{equityMeta.shortTicker} {signal.riskOn ? 'pokonuje' : 'nie pokonuje'} IB01 o <strong>{formatPercentagePoints(Math.abs(signal.absoluteMargin))}</strong>.</p>
             </article>
             <ArrowRight className="decision-arrow" />
             <article>
@@ -227,22 +274,33 @@ export default function App() {
               <p>{signal.switchBuffered
                 ? `${candidateMeta.shortTicker} ma przewagę ${formatPercentagePoints(signal.switchAdvantage ?? 0)}, czyli mniej niż wymagane +${signal.switchBuffer.toLocaleString('pl-PL')} p.p. — bez zmiany pozycji.`
                 : signal.riskOn
-                  ? `W trybie risk-on trzymamy zwycięzcę części akcyjnej.`
-                  : `W obronie silniejszy jest ${defensiveMeta.shortTicker} — przewaga ${formatPercent(signal.defensiveMargin)}.`}</p>
+                  ? `W trybie akcyjnym trzymamy zwycięzcę części akcyjnej.`
+                  : `W obronie silniejszy jest ${defensiveMeta.shortTicker} — przewaga ${formatPercentagePoints(signal.defensiveMargin)}.`}</p>
             </article>
           </div>
         </section>
 
         <section className="method-card full-span">
-          <button onClick={() => setMethodOpen((value) => !value)} aria-expanded={methodOpen}>
-            <span><Info size={19} /><span><strong>Jak dokładnie działa ta wersja GEM?</strong><small>Reguła, założenia i ważna różnica względem klasycznego GEM</small></span></span>
+          <button
+            onClick={() => setMethodOpen((value) => !value)}
+            aria-expanded={methodOpen}
+            aria-controls="gem-app-guide"
+          >
+            <span><Info size={19} /><span><strong>Jak działa GEM Kompas?</strong><small>Proste wyjaśnienie danych, sygnału, bufora i trybu offline</small></span></span>
             <ChevronDown className={methodOpen ? 'rotated' : ''} />
           </button>
-          {methodOpen && <div className="method-content">
-            <p><strong>Reguła adaptowana:</strong> porównujemy EIMI, IWDA i CNDX, a następnie wybieramy najsilniejszy ETF akcyjny. Jeżeli jego 12-miesięczna stopa zwrotu przewyższa IB01, portfel otrzymuje sygnał risk-on. Jeżeli nie — przechodzi do silniejszego z CBU0 i IB01.</p>
-            <p><strong>Bufor zmiany 3 p.p.:</strong> jeśli w portfelu jest już ustawione aktywo, nowy kandydat musi mieć momentum wyższe o co najmniej 3 punkty procentowe. Mniejsza przewaga nie wywołuje zmiany, co ogranicza niepotrzebne transakcje przy częstym przecinaniu się wykresów.</p>
-            <p><strong>Dlaczego nie nazywamy tego dokładnym klasycznym GEM?</strong> Oryginał porównuje akcje USA z akcjami poza USA, a w trybie ochronnym wykorzystuje szeroki indeks obligacji agregatowych. CNDX koncentruje się na Nasdaq 100, IWDA zawiera dużo USA, EIMI obejmuje tylko rynki wschodzące, a CBU0 to obligacje skarbowe USA 7–10 lat. Mechanika dual momentum jest zachowana, lecz koszyki są inne.</p>
-            <p><strong>Sygnał nie zmienia się w środku miesiąca.</strong> Obliczamy go ze skorygowanych cen zamknięcia od końca miesiąca do końca miesiąca 12 miesięcy wcześniej. Kalendarz uwzględnia weekendy i standardowe dni bez sesji LSE.</p>
+          {methodOpen && <div
+            className="method-content guide-grid"
+            id="gem-app-guide"
+            role="region"
+            aria-label="Jak działa GEM Kompas"
+          >
+            {APP_GUIDE_SECTIONS.map((section, index) => (
+              <article key={section.title}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <div><h3>{section.title}</h3><p>{section.body}</p></div>
+              </article>
+            ))}
           </div>}
         </section>
 

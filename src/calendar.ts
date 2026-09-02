@@ -1,7 +1,39 @@
 const DAY = 24 * 60 * 60 * 1000
+export const LSE_CALENDAR_VERIFIED_THROUGH_YEAR = 2026
+export const LSE_TIME_ZONE = 'Europe/London'
+
+const LSE_HOLIDAY_OVERRIDES: Record<number, { add: readonly string[]; remove?: readonly string[] }> = {
+  2022: {
+    add: ['2022-06-02', '2022-06-03', '2022-09-19'],
+    remove: ['2022-05-30'],
+  },
+  2023: {
+    add: ['2023-05-08'],
+  },
+}
 
 function dateOnly(year: number, month: number, day: number) {
   return new Date(Date.UTC(year, month, day))
+}
+
+function datePartsInTimeZone(now: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now)
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value)
+  return { year: value('year'), month: value('month') - 1, day: value('day') }
+}
+
+export function lseDate(now = new Date()) {
+  const { year, month, day } = datePartsInTimeZone(now, LSE_TIME_ZONE)
+  return dateOnly(year, month, day)
+}
+
+export function lseDateKey(now = new Date()) {
+  return lseDate(now).toISOString().slice(0, 10)
 }
 
 function easterSunday(year: number) {
@@ -54,7 +86,7 @@ export function lseHolidays(year: number) {
     observedBoxing = new Date(observedBoxing.getTime() + DAY)
   }
 
-  return [
+  const standard = [
     observed(dateOnly(year, 0, 1)),
     goodFriday,
     easterMonday,
@@ -63,6 +95,12 @@ export function lseHolidays(year: number) {
     lastWeekday(year, 7, 1),
     observedChristmas,
     observedBoxing,
+  ]
+  const overrides = LSE_HOLIDAY_OVERRIDES[year]
+  const removed = new Set(overrides?.remove ?? [])
+  return [
+    ...standard.filter((date) => !removed.has(date.toISOString().slice(0, 10))),
+    ...(overrides?.add ?? []).map((date) => new Date(`${date}T12:00:00Z`)),
   ]
 }
 
@@ -79,8 +117,32 @@ export function firstTradingDay(year: number, month: number) {
   return candidate
 }
 
+export function lastTradingDay(year: number, month: number) {
+  const candidate = dateOnly(year, month + 1, 0)
+  while (!isLseTradingDay(candidate)) candidate.setUTCDate(candidate.getUTCDate() - 1)
+  return candidate
+}
+
+const isoDate = (date: Date) => date.toISOString().slice(0, 10)
+
+export function signalPeriod(now = new Date()) {
+  const currentMarketDate = lseDate(now)
+  const signalMonth = isoDate(currentMarketDate).slice(0, 7)
+  const end = lastTradingDay(currentMarketDate.getUTCFullYear(), currentMarketDate.getUTCMonth() - 1)
+  const start = lastTradingDay(end.getUTCFullYear() - 1, end.getUTCMonth())
+
+  return {
+    signalMonth,
+    signalDate: isoDate(end),
+    signalStartDate: isoDate(start),
+    calendarVerified: currentMarketDate.getUTCFullYear() <= LSE_CALENDAR_VERIFIED_THROUGH_YEAR
+      && end.getUTCFullYear() <= LSE_CALENDAR_VERIFIED_THROUGH_YEAR
+      && start.getUTCFullYear() <= LSE_CALENDAR_VERIFIED_THROUGH_YEAR,
+  }
+}
+
 export function rebalanceSchedule(now = new Date()) {
-  const today = dateOnly(now.getFullYear(), now.getMonth(), now.getDate())
+  const today = lseDate(now)
   const thisMonth = firstTradingDay(today.getUTCFullYear(), today.getUTCMonth())
   const next = today.getTime() <= thisMonth.getTime()
     ? thisMonth
@@ -93,5 +155,67 @@ export function rebalanceSchedule(now = new Date()) {
     previous,
     daysToNext: Math.max(0, Math.ceil((next.getTime() - today.getTime()) / DAY)),
     isDecisionDay: today.getTime() === thisMonth.getTime(),
+    isBeforeDecisionDay: today.getTime() < thisMonth.getTime(),
+    isAfterDecisionDay: today.getTime() > thisMonth.getTime(),
   }
+}
+
+export function decisionDates(now = new Date(), months = 24) {
+  const dates: Date[] = []
+  const today = lseDate(now)
+  let year = today.getUTCFullYear()
+  let month = today.getUTCMonth()
+
+  while (dates.length < months) {
+    const decisionDate = firstTradingDay(year, month)
+    if (decisionDate.getTime() >= today.getTime()) {
+      dates.push(decisionDate)
+    }
+    month += 1
+    if (month === 12) {
+      month = 0
+      year += 1
+    }
+  }
+
+  return dates
+}
+
+const compactDate = (date: Date) => date.toISOString().slice(0, 10).replaceAll('-', '')
+
+export function createDecisionCalendar(now = new Date(), months = 24) {
+  const createdAt = now.toISOString().replaceAll('-', '').replaceAll(':', '').replace(/\.\d{3}Z$/, 'Z')
+  const events = decisionDates(now, months).map((date) => {
+    const day = compactDate(date)
+    const verificationNote = date.getUTCFullYear() > LSE_CALENDAR_VERIFIED_THROUGH_YEAR
+      ? ` Terminy po ${LSE_CALENDAR_VERIFIED_THROUGH_YEAR} r. potwierdź w aktualnym kalendarzu LSE.`
+      : ''
+    return [
+      'BEGIN:VEVENT',
+      `UID:gem-kompas-${day}@gem-kompas`,
+      `DTSTAMP:${createdAt}`,
+      `DTSTART:${day}T090000`,
+      `DTEND:${day}T091500`,
+      'SUMMARY:Dzień decyzji GEM',
+      `DESCRIPTION:Dziś dzień decyzji GEM. Otwórz aplikację i wykonaj checklistę.${verificationNote}`,
+      'BEGIN:VALARM',
+      'TRIGGER:-PT0M',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Dziś dzień decyzji GEM. Otwórz aplikację i wykonaj checklistę.',
+      'END:VALARM',
+      'END:VEVENT',
+    ].join('\r\n')
+  })
+
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//GEM Kompas//Kalendarz decyzji//PL',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:GEM Kompas — dni decyzji',
+    ...events,
+    'END:VCALENDAR',
+    '',
+  ].join('\r\n')
 }

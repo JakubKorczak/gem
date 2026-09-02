@@ -24,7 +24,20 @@ export type AssetMarketData = {
 export type MarketResponse = {
   generatedAt: string
   source: string
+  signalMonth: string
   signalDate: string
   signalStartDate: string
+  quality: {
+    status: 'verified'
+    expectedSignalDate: string
+    expectedSignalStartDate: string
+    calendarVerifiedThroughYear: number
+  }
   assets: AssetMarketData[]
 }
+
+export type MarketErrorCode =
+  | 'INCOMPLETE_MONTH_END'
+  | 'INVALID_UPSTREAM_DATA'
+  | 'UPSTREAM_UNAVAILABLE'
+  | 'UNVERIFIED_CALENDAR'

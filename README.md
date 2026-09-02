@@ -15,15 +15,23 @@ Aplikacja będzie dostępna pod adresem `http://127.0.0.1:5173`.
 
 Raz w miesiącu aplikacja:
 
-1. porównuje 12-miesięczne momentum EIMI, IWDA i CNDX,
+1. porównuje stopę zwrotu z ostatnich 12 miesięcy dla EIMI, IWDA i CNDX,
 2. sprawdza, czy zwycięzca części akcyjnej pokonuje IB01,
 3. przy sygnale risk-on wskazuje zwycięzcę akcyjnego, a przy risk-off wybiera silniejszy z CBU0 i IB01.
 
-Jeżeli w aplikacji ustawiono obecną pozycję, zmiana następuje dopiero wtedy, gdy nowy kandydat ma momentum wyższe o co najmniej 3 punkty procentowe. Bufor ogranicza zbędne transakcje przy niewielkich różnicach między aktywami.
+Jeżeli w aplikacji ustawiono obecną pozycję, zmiana następuje dopiero wtedy, gdy nowy kandydat ma stopę zwrotu wyższą o co najmniej 3 punkty procentowe. Bufor ogranicza zbędne transakcje przy niewielkich różnicach między aktywami. Nie dotyczy to obowiązkowego wyjścia z ETF-u akcyjnego po pojawieniu się trybu ochronnego: wtedy aplikacja zawsze wybiera silniejszy z CBU0 i IB01.
 
-Sygnał jest zamrażany na podstawie ostatniej sesji zakończonego miesiąca. To adaptacja mechaniki dual momentum do aktywów ze screena, a nie dokładna implementacja klasycznego GEM Gary'ego Antonacciego, który wykorzystuje akcje USA, akcje poza USA i szeroki indeks obligacji agregatowych.
+Sygnał jest wyliczany wyłącznie dla dokładnie oczekiwanej ostatniej sesji LSE zakończonego miesiąca oraz analogicznej sesji rok wcześniej. Wszystkie aktywa muszą mieć notowania z obu tych dat, w USD i na LSE. Brak lub niespójność choćby jednego notowania zatrzymuje publikację sygnału zamiast przesuwać cały okres wstecz. Rok bez zweryfikowanego kalendarza LSE również nie generuje aktywnej decyzji.
 
-Notowania pobierane są serwerowo z publicznego endpointu Yahoo Finance i buforowane przez 15 minut. Przed transakcją należy potwierdzić dane oraz ticker u brokera.
+Notowania pobierane są serwerowo z publicznego endpointu Yahoo Finance i buforowane przez 15 minut dopiero po przejściu kompletnej walidacji. Przed transakcją należy potwierdzić dane oraz ticker u brokera.
+
+W aplikacji znajduje się domyślnie zamknięta sekcja **Jak działa GEM Kompas?**. W dziewięciu krótkich częściach wyjaśnia cały przepływ: dane, sposób wyboru aktywa, bufor, obecną pozycję, termin decyzji, statusy danych, tryb offline i ograniczenia strategii.
+
+## Przypomnienie i instalacja na telefonie
+
+- GEM Kompas można zainstalować jako PWA z menu przeglądarki lub przyciskiem instalacyjnym, jeżeli przeglądarka go udostępnia. Na iPhonie użyj **Udostępnij → Do ekranu głównego**.
+- Po co najmniej jednym poprawnym pobraniu danych aplikacja zapisuje zweryfikowany, wersjonowany snapshot ostatniego sygnału. Dane są oznaczane jako aktualne online, aktualne z pamięci albo stare. Snapshot z wcześniejszego miesiąca pozostaje dostępny wyłącznie informacyjnie i nie pokazuje instrukcji kupna ani sprzedaży.
+- Jeżeli planowany dzień decyzji już minął, aplikacja nie blokuje użytkownika komunikatem „nie składaj zlecenia”, tylko wyjaśnia, że zamknięty sygnał nadal obowiązuje do kolejnego terminu i przypomina o potwierdzeniu cen u brokera.
 
 ## Wdrożenie na Vercel
 
@@ -40,6 +48,18 @@ npm ci
 npm test
 npm run lint
 npm run build
+git diff --check
 ```
 
-Alternatywnie, po zalogowaniu w Vercel CLI, uruchom `vercel` w katalogu projektu.
+Po zalogowaniu w Vercel CLI można dodatkowo odtworzyć produkcyjny build poleceniem `vercel build --prod`.
+
+## Raport walidacji strategii
+
+Czysty silnik backtestu wyznacza sygnał na zamknięciu miesiąca i wykonuje go dopiero po cenie zamknięcia następnej wspólnej sesji, aby nie przypisywać nowej pozycji ruchu sprzed możliwego zlecenia. Historyczne month-endy pochodzą z serii referencyjnej `^FTSE` dla LSE i `SPY` dla rynku USA. Brak notowania któregokolwiek aktywa w oczekiwanym month-end przerywa raport zamiast przesuwać okres wstecz. Raport porównuje progi 0/1/2/3/5 p.p., koszty 0/10/25 punktów bazowych, wariant UCITS z CNDX i bez CNDX, rozszerzone proxy EEM/URTH/QQQ/IEF/BIL oraz klasyczny punkt odniesienia SPY/VEU/AGG. Podaje między innymi CAGR, zmienność, dzienne i miesięczne obsunięcia, obrót, czas w aktywach, liczbę zmian i potencjalnych zdarzeń podatkowych. Nie zakłada jednej stawki podatku i nie zmienia automatycznie ustawień aplikacji.
+
+```bash
+npm run backtest
+npm run backtest:json
+```
+
+Yahoo musi jawnie zwrócić skorygowane dane dzienne. Generator przerywa raport, jeżeli dostawca zwróci inną częstotliwość lub zbyt krótką serię. Wyniki można zapisać do pliku przez standardowe przekierowanie wyjścia, na przykład `npm run backtest > raport.md`.
