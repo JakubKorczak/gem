@@ -1,6 +1,11 @@
 import { ASSETS } from '../src/shared/assets.js'
 import { LSE_CALENDAR_VERIFIED_THROUGH_YEAR, signalPeriod } from '../src/calendar.js'
-import type { MarketErrorCode, MarketResponse, PricePoint } from '../src/types.js'
+import type { MarketResponse, PricePoint } from '../src/types.js'
+
+import { fetchYahooChart } from './yahoo.js'
+import { MarketDataError } from './market-error.js'
+export { MarketDataError } from './market-error.js'
+export { YAHOO_MAX_UPSTREAM_WAIT_MS } from './yahoo.js'
 
 const cache = new Map<string, { expires: number; data: MarketResponse }>()
 
@@ -13,56 +18,6 @@ type YahooResponse = {
     }>
     error?: unknown
   }
-}
-
-const YAHOO_HOSTS = ['query2.finance.yahoo.com', 'query1.finance.yahoo.com'] as const
-export const YAHOO_MAX_UPSTREAM_WAIT_MS = 16_000
-const YAHOO_HOST_TIMEOUT_MS = YAHOO_MAX_UPSTREAM_WAIT_MS / YAHOO_HOSTS.length
-
-export class MarketDataError extends Error {
-  constructor(public readonly code: MarketErrorCode, message: string) {
-    super(message)
-    this.name = 'MarketDataError'
-  }
-}
-
-function yahooChartUrl(host: (typeof YAHOO_HOSTS)[number], ticker: string) {
-  return `https://${host}/v8/finance/chart/${encodeURIComponent(ticker)}?range=2y&interval=1d&events=div%2Csplits`
-}
-
-async function fetchYahooChart(ticker: (typeof ASSETS)[number]['ticker']): Promise<YahooResponse> {
-  let lastError: unknown
-
-  for (const host of YAHOO_HOSTS) {
-    try {
-      const response = await fetch(yahooChartUrl(host, ticker), {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Mozilla/5.0 GEM-Kompas/0.1',
-        },
-        signal: AbortSignal.timeout(YAHOO_HOST_TIMEOUT_MS),
-      })
-      const body = await response.text()
-
-      if (!response.ok) {
-        throw new MarketDataError('UPSTREAM_UNAVAILABLE', `Źródło danych zwróciło ${response.status} dla ${ticker}`)
-      }
-
-      try {
-        return JSON.parse(body) as YahooResponse
-      } catch {
-        throw new MarketDataError('INVALID_UPSTREAM_DATA', `Źródło danych zwróciło nieprawidłową odpowiedź dla ${ticker}`)
-      }
-    } catch (error) {
-      lastError = error
-    }
-  }
-
-  if (lastError instanceof MarketDataError) throw lastError
-  throw new MarketDataError(
-    'UPSTREAM_UNAVAILABLE',
-    lastError instanceof Error ? lastError.message : `Nie udało się pobrać notowań dla ${ticker}`,
-  )
 }
 
 function normalizePoints(timestamps: number[], closes: Array<number | null>): PricePoint[] {
@@ -101,7 +56,7 @@ function pointAt(history: AssetHistory, isoDate: string) {
 }
 
 async function fetchAssetHistory(ticker: (typeof ASSETS)[number]['ticker']): Promise<AssetHistory> {
-  const payload = await fetchYahooChart(ticker)
+  const payload = await fetchYahooChart(ticker) as YahooResponse
   const result = payload.chart?.result?.[0]
   const timestamps = result?.timestamp
   const closes = result?.indicators?.adjclose?.[0]?.adjclose

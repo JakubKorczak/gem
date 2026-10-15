@@ -25,6 +25,14 @@ Sygnał jest wyliczany wyłącznie dla dokładnie oczekiwanej ostatniej sesji LS
 
 Notowania pobierane są serwerowo z publicznego endpointu Yahoo Finance i buforowane przez 15 minut dopiero po przejściu kompletnej walidacji. Przed transakcją należy potwierdzić dane oraz ticker u brokera.
 
+## Bieżące ceny ETF-ów
+
+Pod głównym sygnałem sekcja **Co słychać na rynkach?** pokazuje pięć małych kart: cenę ETF-u w USD, zmianę kwotową i procentową względem poprzedniego zamknięcia oraz czas notowania w strefie Europe/Warsaw. Dane nie zmieniają miesięcznego sygnału strategii.
+
+Endpoint `/api/quotes` korzysta z publicznego API Yahoo Finance (`/v8/finance/chart`, `range=1d`, `interval=5m`), bez klucza API. Weryfikuje ticker, LSE, USD, dodatnie ceny i czas notowania. Ceną jest `regularMarketPrice`, a bazą zmiany `previousClose`, nie skorygowana cena historyczna ani początek zakresu wykresu. Udane odpowiedzi dla każdego instrumentu są buforowane na serwerze przez minutę; błąd jednego ETF-u nie blokuje pozostałych ani miesięcznego sygnału. Publiczne źródło może ograniczać zapytania lub być niedostępne.
+
+Karty odświeżają się co minutę i po powrocie do okna. Sesja jest rozpoznawana na podstawie godzin zwróconych przez dostawcę. Poza sesją karty mają przygaszone tło i opis „ostatnia cena”; starsze dane i tryb offline mają bursztynowe tło oraz jawny status. Notowanie starsze niż 30 minut podczas sesji, brak ostatniej oczekiwanej sesji, błąd odświeżenia lub odpowiedź sprzed ponad 5 minut nie są oznaczane jako bieżące. Zawsze widoczna jest faktyczna data ceny; ceny mogą być opóźnione. Bieżące notowania nie są zapisywane przez service workera i nie korzystają ze snapshotu miesięcznego sygnału.
+
 W aplikacji znajduje się domyślnie zamknięta sekcja **Jak działa GEM Kompas?**. W dziewięciu krótkich częściach wyjaśnia cały przepływ: dane, sposób wyboru aktywa, bufor, obecną pozycję, termin decyzji, statusy danych, tryb offline i ograniczenia strategii.
 
 ## Przypomnienie i instalacja na telefonie

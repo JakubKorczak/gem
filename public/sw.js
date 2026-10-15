@@ -1,5 +1,5 @@
-const SHELL_CACHE = 'gem-shell-v5'
-const DATA_CACHE = 'gem-data-v5'
+const SHELL_CACHE = 'gem-shell-v6'
+const DATA_CACHE = 'gem-data-v6'
 const CORE_FILES = ['/', '/index.html', '/manifest.webmanifest', '/icons/gem-icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png', '/icons/apple-touch-icon.png']
 
 async function cacheAppShell() {
@@ -56,6 +56,11 @@ self.addEventListener('fetch', (event) => {
 
   if (url.pathname === '/api/market') {
     event.respondWith(networkFirst(request, DATA_CACHE, true))
+    return
+  }
+
+  if (url.pathname === '/api/quotes') {
+    event.respondWith(fetch(new Request(request, { cache: 'no-store' })))
     return
   }
 

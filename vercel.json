@@ -4,6 +4,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
+    "api/quotes.ts": {
+      "maxDuration": 20
+    },
     "api/market.ts": {
       "maxDuration": 20
     }

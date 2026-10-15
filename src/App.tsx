@@ -23,6 +23,7 @@ import { APP_GUIDE_SECTIONS } from './app-guide'
 import { formatDate, formatDateTime, formatPercentagePoints, formatPercent, formatSignalMonth } from './format'
 import { getMarketData, marketQueryKey } from './market-client'
 import { calculateGemSignal } from './strategy'
+import { MarketQuotes } from './MarketQuotes'
 
 const HOLDING_STORAGE_KEY = 'gem-current-holding-v2'
 const PerformanceChart = lazy(() => import('./PerformanceChart').then((module) => ({
@@ -38,6 +39,7 @@ function LoadingState() {
         <h1>Sprawdzam rynki</h1>
         <p>Pobieram ostatnie 12 miesięcy notowań pięciu ETF-ów z giełdy w Londynie.</p>
       </div>
+      <MarketQuotes />
     </main>
   )
 }
@@ -111,6 +113,7 @@ export default function App() {
           <p>{market.error?.message ?? 'Źródło danych jest chwilowo niedostępne.'}</p>
           <button className="primary-button" onClick={() => market.refetch()}><RefreshCw size={17} /> Spróbuj ponownie</button>
         </section>
+        <MarketQuotes />
       </main>
     )
   }
@@ -209,6 +212,8 @@ export default function App() {
             </select>
           </label>
         </section>
+
+        <MarketQuotes />
 
         <section className="section full-span">
           <div className="section-heading">

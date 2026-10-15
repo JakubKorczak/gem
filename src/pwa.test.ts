@@ -15,9 +15,9 @@ describe('kontrakt PWA', () => {
     const worker = readFileSync(`${projectRoot}/public/sw.js`, 'utf8')
     const entry = readFileSync(`${projectRoot}/src/main.tsx`, 'utf8')
 
-    expect(worker).toContain("const SHELL_CACHE = 'gem-shell-v5'")
-    expect(worker).toContain("const DATA_CACHE = 'gem-data-v5'")
-    expect(entry).toContain("register('/sw.js?v=5')")
+    expect(worker).toContain("const SHELL_CACHE = 'gem-shell-v6'")
+    expect(worker).toContain("const DATA_CACHE = 'gem-data-v6'")
+    expect(entry).toContain("register('/sw.js?v=6')")
   })
 
   it('ma komplet ikon zadeklarowanych w manifeście', () => {
